@@ -41,6 +41,7 @@ COLORS = {
     'PATHOFF': (64+32, 128+16, 128+16, 255),
     'PATHON': (64+32, 128+64, 128+64, 255),
     'TARGET': (128+64, 128+32, 128, 255),
+    'CURRPOS': (64, 128+64+32, 64, 255),
 }
 BASE_LENGTH = 5
 ROBOT_WIDTH = 1.5
@@ -54,10 +55,12 @@ FINGER_WIDTH = 0.35
 JOINT_RADIUS = int(PPM*ROBOT_WIDTH)+1 # this is in PyGame pixel units
 FORCE_SCALE = 35 # scale of the isDragging force
 MAX_JOINT_TORQUE = 10000000
-MAX_GRIPPER_FORCE = 458
-BOX_RESTITUTION = 1.0
+MAX_GRIPPER_FORCE = 39
+BOX_RESTITUTION = 0.48
+USE_WELD_GRASP = True # if true, will use welding joints for grasping
 
 KPID = [(27.0, 0.0, 0.0), (19.0, 0.0, 1.0),  # PID gains for the arm joints
-        (84.0, 0.0, 12.0),                   # PID gain for the wrist
-        (1.27, 0.74, 1.44)]                  # PID gain for the gripper
+        (19.0, 0.0, 1.0),                   # PID gain for the wrist
+        (2.17, 0.00, 0.63)]                  # PID gain for the gripper
+#        (2.17, 6.72, 0.63)]                  # PID gain for the gripper
 
