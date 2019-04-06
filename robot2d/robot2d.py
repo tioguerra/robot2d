@@ -422,7 +422,6 @@ class Robot2D:
     def _ungrasp(self):
         ''' Undo the weld joint grasping (if any)
         '''
-        print("Opened Gripper!")
         if self.j7 is not None:
             self.world.DestroyJoint(self.j7)
             self.world.DestroyJoint(self.j8)
@@ -433,7 +432,6 @@ class Robot2D:
     def _grasp(self, body, pos=None):
         ''' This function creates a weld joint for a firm
         grasp, not letting the object go easily'''
-        print('Creating Joint!')
         if pos is None:
             pos = self.getFK()
         self.j7 = self.world.CreateWeldJoint( \
@@ -594,7 +592,6 @@ class Robot2D:
         # Grasp using weld joints
         if self.use_weld_grasp:
             if not self._is_grasping() and self.getGripperGoal():
-                print("Closed Gripper!")
                 grip_pos = self.getFK()
                 for body in self.bodies: # Iterate over all bodies...
                     if not body in self.robot_bodies: # Must not belong to robot
