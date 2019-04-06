@@ -86,6 +86,7 @@ class Robot2D:
         self.isPathFollowing = False
         self.path_counter = 0.0
         self.draggedBodies = {}
+        self.use_weld_grasp = USE_WELD_GRASP # Flag for joint based grasping
         # Some lists to hold things to be drawn on the screen
         self.dots = []
         self.lines = []
@@ -229,15 +230,19 @@ class Robot2D:
                                              joint1=self.j4,
                                              joint2=self.j5,
                                              ratio = 1.0)
+        # This is for grasping (placeholder)
+        self.j7 = None
         # Append the bodies to our queue for isDrawing later
-        self.bodies.append(self.robot_base0_body)
-        self.bodies.append(self.robot_base1_body)
-        self.bodies.append(self.robot_link0_body)
-        self.bodies.append(self.robot_link1_body)
-        self.bodies.append(self.robot_link2_body)
-        self.bodies.append(self.robot_link3_body)
-        self.bodies.append(self.robot_link4_body)
-        self.bodies.append(self.robot_link5_body)
+        self.robot_bodies = []
+        self.robot_bodies.append(self.robot_base0_body)
+        self.robot_bodies.append(self.robot_base1_body)
+        self.robot_bodies.append(self.robot_link0_body)
+        self.robot_bodies.append(self.robot_link1_body)
+        self.robot_bodies.append(self.robot_link2_body)
+        self.robot_bodies.append(self.robot_link3_body)
+        self.robot_bodies.append(self.robot_link4_body)
+        self.robot_bodies.append(self.robot_link5_body)
+        self.bodies = self.bodies + self.robot_bodies
         # Append the revolute joints to our joints list for PID
         # control and for isDrawing later
         self.joints.append(self.j0)
@@ -327,6 +332,26 @@ class Robot2D:
     def setJointTarget(self, target):
         [j0, j1, j2, j4, j5] = target
         self.target = target
+    def getFK(self):
+        ''' This method returns the current position of the gripper
+        in world 2D coordinates
+        '''
+        x0, y0 = (ROBOTY,\
+                         6+BASE_LENGTH+LINK0_LENGTH)
+        # These are the link lengths
+        a1 = 2*LINK0_LENGTH
+        a2 = 2*LINK1_LENGTH
+        a3 = 2*LINK2_LENGTH+2*LINK3_LENGTH+2*FINGER_LENGTH
+        x = a1*np.cos(self.j0.angle + np.pi/2.0) \
+            + a2*np.cos(self.j0.angle + np.pi/2.0 + self.j1.angle) \
+            + a3*np.cos(self.j0.angle + np.pi/2.0 + self.j1.angle + self.j2.angle)
+        y = a1*np.sin(self.j0.angle + np.pi/2.0) \
+            + a2*np.sin(self.j0.angle + np.pi/2.0 + self.j1.angle) \
+            + a3*np.sin(self.j0.angle + np.pi/2.0 + self.j1.angle + self.j2.angle)
+        # Here is offset the joint coordinates
+        x = x + x0
+        y = y + y0
+        return x,y
     def setIKTarget(self, target):
         ''' This implements the closed-form solution of the inverse kinematics
         for the 2DOF arm.
@@ -378,6 +403,54 @@ class Robot2D:
             # Great, we got a new target.
             self.target = [q1, q2, np.pi-q1-q2, \
                            -gripper*self.gripperMax]
+    def getGripperGoal(self):
+        ''' Tells if gripper is closed (True) or opened (False)
+        '''
+        #gripper = - self.j4.translation / self.gripperMax
+        gripper = - self.target[-1] / self.gripperMax
+        if gripper > 0.25:
+            return False
+        else:
+            return True
+    def _is_grasping(self):
+        ''' Returns true if welding grasping is active
+        '''
+        if self.j7 is None:
+            return False
+        else:
+            return True
+    def _ungrasp(self):
+        ''' Undo the weld joint grasping (if any)
+        '''
+        print("Opened Gripper!")
+        if self.j7 is not None:
+            self.world.DestroyJoint(self.j7)
+            self.world.DestroyJoint(self.j8)
+            self.world.DestroyJoint(self.j9)
+            self.j7 = None
+            self.j8 = None
+            self.j9 = None
+    def _grasp(self, body, pos=None):
+        ''' This function creates a weld joint for a firm
+        grasp, not letting the object go easily'''
+        print('Creating Joint!')
+        if pos is None:
+            pos = self.getFK()
+        self.j7 = self.world.CreateWeldJoint( \
+                    bodyA=self.robot_link2_body,\
+                    bodyB=body,\
+                    anchor=pos,\
+                    collideConnected = False)
+        self.j8 = self.world.CreateWeldJoint( \
+                    bodyA=self.robot_link4_body,\
+                    bodyB=body,\
+                    anchor=pos,\
+                    collideConnected = False)
+        self.j9 = self.world.CreateWeldJoint( \
+                    bodyA=self.robot_link5_body,\
+                    bodyB=body,\
+                    anchor=pos,\
+                    collideConnected = False)
     def startFollowingPath(self, path = None):
         ''' Tells the robot to start following a path
 
@@ -389,6 +462,7 @@ class Robot2D:
         if path: # We overwrite the path one is provided
             self.path = path
         self.path_counter = 0
+        self.enableTorque()
         self.isPathFollowing = True
     def stopFollowingPath(self):
         ''' Stops following a path
@@ -517,6 +591,19 @@ class Robot2D:
             if self.path_counter >= len(self.path):
                 self.path_counter = 0
                 self.isPathFollowing = False
+        # Grasp using weld joints
+        if self.use_weld_grasp:
+            if not self._is_grasping() and self.getGripperGoal():
+                print("Closed Gripper!")
+                grip_pos = self.getFK()
+                for body in self.bodies: # Iterate over all bodies...
+                    if not body in self.robot_bodies: # Must not belong to robot
+                        for fixture in body.fixtures: # Iterate the fixtures
+                            if fixture.TestPoint(grip_pos): # Test clicked pos
+                                self._grasp(body,grip_pos)
+                                break # pick only one
+            elif self._is_grasping() and not self.getGripperGoal():
+                self._ungrasp()
         # Update joint torques
         if self.isTorqueEnabled:
             self._jointPID()
@@ -567,9 +654,13 @@ class Robot2D:
                 color = COLORS['PATHON']
             pygame.draw.circle(self.screen, color,
                                b2d_to_pygame(point), path_radius)
+        # If it is following a path, then draw a red circle
         if self.path and self.isPathFollowing:
             pygame.draw.circle(self.screen, COLORS['TARGET'],
                             b2d_to_pygame(self.path[self.path_counter]), 8)
+        # Draw the current pos
+        pygame.draw.circle(self.screen, COLORS['CURRPOS'],
+                           b2d_to_pygame(self.getFK()), 9, 2)
         self.dots = []
         # Simulation step
         self.world.Step(TIME_STEP, 10, 10)
@@ -593,7 +684,8 @@ class Robot2D:
             # to make it easier for the robot to grasp the box
             self.box_bodies[-1].CreatePolygonFixture(box=(1.25, 1.25),
                                                      density=0.125,
-                                                     friction=100.0)
+                                                     friction=100.0,
+                                                     restitution=BOX_RESTITUTION)
         # We color all these boxes in the BOX color
         for box in self.box_bodies:
             self.colors[box] = COLORS['BOX']
@@ -633,98 +725,6 @@ class Robot2D:
         path = path + interpolate_path(pos_goal2, pos_above_goal2, 1.0, 50)
         path = path + interpolate_path(pos_above_goal2, pos0, 1.0, 25)
         self.path = path
-
-def calibrate_pid_gains():
-    ''' This function performs some calibration (guided random search)
-    for tuning the parameters of the PID, taking the current values
-    as the start point. The way it works is that is generates random
-    points around the current one, starting with 1.5x value changes.
-    We test these random values, pick the best one, and generate new
-    values again, now in a narrower neighborhood. Then we repeat
-    the process with narrower and narrower neighborhood, until we
-    (hopefully) converge to a nice value.
-    '''
-    global KPID # We use the current PID gains as our start point
-    scores = {} # performance scores for each set of parameters
-    pid_gains = [] # list of sets of PID gains to be tested
-    max_ik = 5 # This is the number of epochs to run
-    # Below we start generating PID gains that are random variations
-    # with amplitude up to 1.5x the current values
-    for ik,k in enumerate(np.linspace(1.5,0.05,max_ik)):
-        # For this epoch, the loop below generates 15 sets
-        # of random gains to test out
-        pid_gains = []
-        for i in range(15*4):
-            # Below we generate a set of the PID gains
-            # for 4 joints (the two fingers have the same
-            # gain each)
-            gains = []
-            for joint in range(4):
-                kp,ki,kd = KPID[joint] # This is the center value
-                # We generate some variation around the center
-                # value for each gain, always allowing a margin
-                # of +1 and -1 to ensure some variability for
-                # even smaller gains. We do not allow negative
-                # gains.
-                kp = \
-                np.max([np.random.randint(int(kp-k*kp)-1,
-                                          int(kp+k*kp)+1),
-                        0.0],initial=0.0)
-                ki = \
-                np.max([np.random.randint(int(ki-k*ki)-1,
-                                          int(ki+k*ki)+1),
-                        0.0],initial=0.0)
-                kd = \
-                np.max([np.random.randint(int(kd-k*kd)-1,
-                                          int(kd+k*kd)+1),
-                        0.0],initial=0.0)
-                gains.append((kp,ki,kd)) # The set of 4 gains
-            pid_gains.append(gains) # All sets of gains of this epoch
-        i = 0 # Simulation counter
-        j = 0 # PID gains set counter
-        w = 0 # Show graphics of the simulation every so often
-        e_sum = 0.0 # Accumulated error
-        robot = Robot2D() # Create a robot
-        robot.enableTorque()
-        show = True # This makes the robot appear on the screen
-        while robot.step(show):
-            if show == True:
-                w = w + 1
-                if w >= 350: # We only show the robot for some frames
-                    w = 0
-                    show = False
-            e = robot.getLastError() # Get the step error
-            e_sum = e_sum + sum((x*10.0)**2 for x in e) # Dum the squared error
-            e_sum = e_sum + (10.0*e[-1])**2 # extra gripper error
-            if i % 20 == 0 and i != 0: # Generate random joint targets
-                robot.target = [(np.pi/2)*np.random.random() for i in range(3)]
-                robot.target = robot.target + [-np.random.random()] + [np.random.random()]
-            if i % 100 == 0 and i != 0:
-                robot.disableTorque()
-                robot.enableTorque()
-                j = j + 1
-                scores[int(e_sum*10)] = KPID
-                if j == len(pid_gains):
-                    # The loop below is just trying to select only the
-                    # best that does not have a zero proportional gain
-                    for ibest in range(len(scores)):
-                        best = scores[sorted(scores.keys())[ibest]]
-                        flag = False
-                        for kp,ki,kd in best:
-                            if kp == 0.0:
-                                flag = True
-                        if not flag:
-                            break
-                    KPID = best
-                    break
-                KPID = pid_gains[j]
-                e_sum = 0
-                print('%.2f done' % ((100.0 \
-                                      * (j / (len(pid_gains)-1) * (1.0/float(max_ik))\
-                                      + (float(ik)/float(max_ik)))))\
-                                      )
-            i = i + 1
-    print(best)
 
 if __name__ == '__main__':
     robot = Robot2D()
