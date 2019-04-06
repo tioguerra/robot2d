@@ -668,7 +668,7 @@ class Robot2D:
             # Update the screen
             pygame.display.flip()
             # Pace the framerate
-            #self.clock.tick(FPS)
+            self.clock.tick(FPS)
         return True
     def createBoxes(self):
         ''' Creates 25 little boxes, for interaction
