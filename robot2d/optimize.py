@@ -132,9 +132,9 @@ def calibrate_gripper_gains():
     global MAX_GRIPPER_FORCE
     global BOX_RESTITUTION
     scores = {}
-    n1 = 3
-    n2 = 5
-    for i1,k in enumerate(np.linspace(0.5,0.1,n1)):
+    n1 = 10
+    n2 = 50
+    for i1,k in enumerate(np.linspace(1.5,0.1,n1)):
         if i1 == 0:
             seed_gains = [list(KPID[3])+ [MAX_GRIPPER_FORCE, BOX_RESTITUTION]]
         gains = []
@@ -159,27 +159,28 @@ def calibrate_gripper_gains():
             robot2d.KPID = KPID
             robot2d.MAX_GRIPPER_FORCE = MAX_GRIPPER_FORCE
             robot2d.BOX_RESTITUTION = BOX_RESTITUTION
-            robot = Robot2D()
+            robot = Robot2D(False)
             robot.createTablesEnv()
             robot.enableTorque()
             robot.startFollowingPath()
             while robot.isPathFollowing:
                 robot.step(show_graphics=show)
-            show = False
+            #show = False
             d = distance(robot.box.position, robot.goal)
             print('%.1f: Dist=%f, Gains=%s' %
                   (100.0*(((1.0/n1)*(i2+1)/len(gains))+(i1/n1)),d,gain))
             scores[int(d*10)] = gain
         best_scores = sorted(scores.keys())
-        seed_gains = [scores[best_scores[i]] for i in range(5)]
+        seed_gains = [scores[best_scores[i]] for i in range(3)]
         KPID[3] = scores[best_scores[0]][:3]
         MAX_GRIPPER_FORCE = scores[best_scores[0]][-2]
         BOX_RESTITUTION = scores[best_scores[0]][-1]
         robot2d.KPID = KPID
         robot2d.MAX_GRIPPER_FORCE = MAX_GRIPPER_FORCE
         robot2d.BOX_RESTITUTION = BOX_RESTITUTION
-    for i in range(3):
-        print(best_scores[i],scores[best_scores[i]])
+        print("BEST SO FAR:")
+        for i in range(3):
+            print(best_scores[i],scores[best_scores[i]])
 
 if __name__ == '__main__':
     if sys.argv[1] == 'gripper':
