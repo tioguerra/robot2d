@@ -1,5 +1,8 @@
 # robot2d
+
 This is a little educational robot simulation using Python, Box2D and PyGame
+
+![](images/robot2d.gif)
 
 ## Dependencies
 
@@ -18,3 +21,4 @@ The PyGame window is interactive, below are some details
 - To start following the path, press space. To stop following a path, press enter again
 
 For more details on how to implement stuff programmatically look at the examples and look at the code of the simulator. It should be more or less straightforward to understand it.
+
