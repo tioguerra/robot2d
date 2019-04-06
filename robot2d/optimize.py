@@ -159,7 +159,7 @@ def calibrate_gripper_gains():
             robot2d.KPID = KPID
             robot2d.MAX_GRIPPER_FORCE = MAX_GRIPPER_FORCE
             robot2d.BOX_RESTITUTION = BOX_RESTITUTION
-            robot = Robot2D(False)
+            robot = Robot2D()
             robot.createTablesEnv()
             robot.enableTorque()
             robot.startFollowingPath()
