@@ -28,6 +28,8 @@ from Box2D.b2 import *
 import numpy as np
 from .params import *
 from .utils import *
+import pydmps
+import pydmps.dmp_discrete
 
 # Here the code that defines the robot simulation class
 
@@ -91,6 +93,12 @@ class Robot2D:
         self.dots = []
         self.lines = []
         self.path = []
+        # DMP related variables
+        self.dmps = [] # this list will store dmp objects
+        self.dmp_training_paths = [[]] # this will store the paths
+        self.dmp_startendpoints = []
+        self.draggingWaypoint = -1 # This will register if dragging a DMP
+                                   # waypoint
     def _createRobot(self):
         ''' This method creates the robot itself, creating the bodies,
         joints, and geometries (fixtures) using Box2D. The method is
@@ -466,6 +474,61 @@ class Robot2D:
         ''' Stops following a path
         '''
         self.isPathFollowing = False
+    def _compute_DMPs(self):
+        ''' This method creates the DMP objects and fits
+        paths to the DMP forcing function kernel weights.
+        The resulting (possibly smoother) path then replaces
+        the originally hand drawn one.
+        '''
+        self.dmps = []
+        self.dmp_startendpoints = []
+        self.path = []
+        y, dy, ddy = [], [], []
+        for i in range(len(self.dmp_training_paths)):
+            self.dmps.append(pydmps.dmp_discrete.DMPs_discrete(n_dmps=3,\
+                                                               n_bfs=DMP_KERNELS, \
+                                                               ay=np.ones(3)*10.0,\
+                                                               axis_to_not_mirror=1,\
+                                                               axis_not_to_scale=2))
+            if i == 0:
+                start_point = self.dmp_training_paths[i][0]
+            else:
+                start_point = self.dmp_training_paths[i-1][-1]
+            end_point = self.dmp_training_paths[i][-1]
+            self.dmp_startendpoints.append((start_point[:2], end_point[:2]))
+            y_des = np.array(self.dmp_training_paths[i].copy()).T
+            self.dmps[i].imitate_path(y_des, plot=False)
+            y, dy, ddy = self.dmps[i].rollout()
+            for t in range(len(y)):
+                if y[t][2] > 0.5:
+                    gripper = 1.0
+                else:
+                    gripper = 0.0
+                gripper = y[t][2]
+                self.path.append((y[t][0], y[t][1], gripper))
+    def _updatePathWithDMPs(self):
+        ''' This method rolls-out the DMPs and regenerate
+        their paths, for the case when their waypoints were
+        dragged
+        '''
+        self.path = []
+        y, dy, ddy = [], [], []
+        for i in range(len(self.dmps)):
+            self.dmps[i].reset_state()
+            self.dmps[i].y0 = np.array((self.dmp_startendpoints[i][0][0],
+                                       self.dmp_startendpoints[i][0][1],
+                                       self.dmp_training_paths[i][0][2]))
+            self.dmps[i].goal = np.array((self.dmp_startendpoints[i][1][0],
+                                         self.dmp_startendpoints[i][1][1],
+                                         self.dmp_training_paths[i][-1][2]))
+            y, dy, ddy = self.dmps[i].rollout()
+            for t in range(len(y)):
+                if y[t][2] > 0.5:
+                    gripper = 1.0
+                else:
+                    gripper = 0.0
+                gripper = y[t][2]
+                self.path.append((y[t][0], y[t][1], gripper))
     def step(self, show_graphics=True):
         ''' This is the main method for performing one step of
         simulation, updating position of objects according to
@@ -486,6 +549,7 @@ class Robot2D:
         # is over.
         if not self.running:
             return False
+        moved_mouse = False # This flag will be set by the event
         # Check PyGame's event queue
         for event in pygame.event.get():
             # Check if the application was closed
@@ -510,9 +574,11 @@ class Robot2D:
                         self.disableTorque()
                     else:
                         self.enableTorque()
-                # Pressing DEL or BACKSPACE deletes the path
+                # Pressing DEL or BACKSPACE deletes the path and
+                # the DMP waypoints
                 if event.key == K_DELETE or event.key == K_BACKSPACE:
                     self.path = []
+                    self.dmp_training_paths = [[]]
                 # Pressing the SPACE BAR will make the target
                 # follow the defined path (if one exists)
                 if event.key == K_SPACE:
@@ -545,43 +611,74 @@ class Robot2D:
                     self.target[3] += 0.25
                 if event.key == K_LSHIFT or event.key == K_RSHIFT:
                     self.gripper = False
+                # The control (CTRL) keys are used to add waypoints
+                # to the DMP
+                if (event.key == K_LCTRL or event.key == K_RCTRL) \
+                   and self.isDrawing:
+                    self.dmp_training_paths.append([])
+                    if len(self.dmp_training_paths) > 1:
+                        self.dmp_training_paths[-1].append(self.dmp_training_paths[-2][-1])
             # Check if the user has clicked an object with the mouse
             elif event.type == MOUSEBUTTONDOWN:
                 self.pos = pygame_to_b2d(event.pos) # PyGame to Box2D coords
-                for body in self.bodies: # Iterate over all bodies...
-                    for fixture in body.fixtures: #...and their fixtures
-                        if fixture.TestPoint(self.pos): # Test clicked pos
-                            self.isDragging = True
-                            # Convert the clicked pos into polar coordinates
-                            # relative to the clicked body
-                            dx = self.pos[0] - body.worldCenter[0]
-                            dy = self.pos[1] - body.worldCenter[1]
-                            radius = np.sqrt(dx**2 + dy**2)
-                            angle = np.arctan2(dy, dx) - body.angle
-                            # Save this info in a dictionary
-                            self.draggedBodies[fixture.body] = radius, angle
+                # First let's check if we are trying to drag a DMP waypoint
+                for i,(start_point,end_point) in enumerate(self.dmp_startendpoints):
+                    if distance(self.pos[:2], start_point) <= DMPMINDRAGDIST:
+                        self.draggingWaypoint = i
+                        self.isDragging = True
+                    elif i == len(self.dmp_startendpoints)-1 and \
+                       distance(self.pos[:2], end_point) <= DMPMINDRAGDIST:
+                        self.draggingWaypoint = i + 1
+                        self.isDragging = True
+                # Check if we are trying to drag a body
+                if not self.isDragging:
+                    for body in self.bodies: # Iterate over all bodies...
+                        for fixture in body.fixtures: #...and their fixtures
+                            if fixture.TestPoint(self.pos): # Test clicked pos
+                                self.isDragging = True
+                                # Convert the clicked pos into polar coordinates
+                                # relative to the clicked body
+                                dx = self.pos[0] - body.worldCenter[0]
+                                dy = self.pos[1] - body.worldCenter[1]
+                                radius = np.sqrt(dx**2 + dy**2)
+                                angle = np.arctan2(dy, dx) - body.angle
+                                # Save this info in a dictionary
+                                self.draggedBodies[fixture.body] = radius, angle
+                # Okay, not dragging, let's just start drawing.
                 if not self.isDragging:
                     self.path = []
+                    self.dmp_training_paths = [[]]
                     self.isDrawing = True
             # If the mouse moved and we are isDragging, then update the pos
             elif event.type == MOUSEMOTION and self.isDragging:
+                moved_mouse = True
                 self.pos = pygame_to_b2d(event.pos)
             # If the mouse moved and we are isDrawing, then update the pos
             elif event.type == MOUSEMOTION and self.isDrawing:
+                moved_mouse = True
                 self.pos = pygame_to_b2d(event.pos)
             # If the button was released, then stop isDragging
             # and also stop isDrawing
             elif event.type == MOUSEBUTTONUP:
+                # If we actually were drawing a path, then
+                # we will also add this last point as the
+                # end point of the last DMP, and then we
+                # will compute the DMP
+                if self.isDrawing:
+                    self._compute_DMPs()
                 self.isDragging = False
                 self.isDrawing = False
                 self.draggedBodies = {}
+                self.draggingWaypoint = -1
         # Append a new target for each time step of the isDrawing
         if self.isDrawing:
+            # self.pos = pygame_to_b2d(pygame.mouse.get_pos())
             if self.gripper:
                 gripper_goal = 0.0
             else:
                 gripper_goal = 1.0
             self.path.append(self.pos+[gripper_goal])
+            self.dmp_training_paths[-1].append(self.pos+[gripper_goal]) # add to DMP path
         # Path following
         if self.isPathFollowing and self.path:
             self.setIKTarget(self.path[self.path_counter])
@@ -606,18 +703,35 @@ class Robot2D:
             self._jointPID()
         # Update forces on dragged objects
         if self.isDragging:
-            # The keys of this dictionary are the dragged objects
-            for body in self.draggedBodies.keys():
-                # Get the relative polar coordinates of the anchor drag
-                # point and convert to world coordinates
-                radius, angle = self.draggedBodies[body]
-                pos0 = body.worldCenter[0]+radius*np.cos(body.angle + angle), \
-                       body.worldCenter[1]+radius*np.sin(body.angle + angle)
-                # Append this point to be drawn later
-                self.dots.append(b2d_to_pygame(pos0))
-                force = FORCE_SCALE*(self.pos[0] - pos0[0]),\
-                        FORCE_SCALE*(self.pos[1] - pos0[1])
-                body.ApplyForce(force, pos0, True)
+            # Let's try first to handle dragging waypoints
+            if self.draggingWaypoint is not -1 and moved_mouse:
+                i = self.draggingWaypoint
+                if i < len(self.dmp_startendpoints):
+                    start_point, end_point = self.dmp_startendpoints[i]
+                    self.dmp_startendpoints[i] = self.pos, end_point
+                    x,y,gripper = self.dmp_training_paths[i][0]
+                    self.dmp_training_paths[i][0] = \
+                            self.pos[0], self.pos[1], gripper
+                if i > 0:
+                    start_point, end_point = self.dmp_startendpoints[i-1]
+                    self.dmp_startendpoints[i-1] = start_point, self.pos
+                    x,y,gripper = self.dmp_training_paths[i-1][-1]
+                    self.dmp_training_paths[i-1][-1] = \
+                            self.pos[0], self.pos[1], gripper
+                self._updatePathWithDMPs()
+            else:
+                # The keys of this dictionary are the dragged objects
+                for body in self.draggedBodies.keys():
+                    # Get the relative polar coordinates of the anchor drag
+                    # point and convert to world coordinates
+                    radius, angle = self.draggedBodies[body]
+                    pos0 = body.worldCenter[0]+radius*np.cos(body.angle + angle), \
+                           body.worldCenter[1]+radius*np.sin(body.angle + angle)
+                    # Append this point to be drawn later
+                    self.dots.append(b2d_to_pygame(pos0))
+                    force = FORCE_SCALE*(self.pos[0] - pos0[0]),\
+                            FORCE_SCALE*(self.pos[1] - pos0[1])
+                    body.ApplyForce(force, pos0, True)
         # Paint the sky
         self.screen.fill(COLORS['SKY'])
         # Draw the bodies
@@ -645,7 +759,7 @@ class Robot2D:
             path_radius = 5
         for x,y,gripper in self.path:
             point = x,y
-            if gripper == 1.0:
+            if gripper > 0.5:
                 color = COLORS['PATHOFF']
             else:
                 color = COLORS['PATHON']
@@ -659,6 +773,15 @@ class Robot2D:
         pygame.draw.circle(self.screen, COLORS['CURRPOS'],
                            b2d_to_pygame(self.getFK()), 9, 2)
         self.dots = []
+        # Draw DMP waypoints (start and end positions of each DMP)
+        for dmp_training_path in self.dmp_training_paths:
+            if len(dmp_training_path) > 0:
+                start_point = dmp_training_path[0][:2]
+                end_point = dmp_training_path[-1][:2]
+                pygame.draw.circle(self.screen, COLORS['DMPWAYPOINT'],
+                                   b2d_to_pygame(start_point), 9, 2)
+                pygame.draw.circle(self.screen, COLORS['DMPWAYPOINT'],
+                                   b2d_to_pygame(end_point), 9, 2)
         # Simulation step
         self.world.Step(TIME_STEP, 10, 10)
         if show_graphics:
