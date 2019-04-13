@@ -42,6 +42,7 @@ COLORS = {
     'PATHON': (64+32, 128+64, 128+64, 255),
     'TARGET': (128+64, 128+32, 128, 255),
     'CURRPOS': (64, 128+64+32, 64, 255),
+    'DMPWAYPOINT': (64, 255, 64, 255),
 }
 BASE_LENGTH = 5
 ROBOT_WIDTH = 1.5
@@ -58,6 +59,9 @@ MAX_JOINT_TORQUE = 10000000
 MAX_GRIPPER_FORCE = 39
 BOX_RESTITUTION = 0.48
 USE_WELD_GRASP = True # if true, will use welding joints for grasping
+DMP_KERNELS = 500 # number of basis functions for the forcing
+                  # function of the DMPs
+DMPMINDRAGDIST = 3 # Minimum distance to drag a DMP point
 
 KPID = [(27.0, 0.0, 0.0), (19.0, 0.0, 1.0),  # PID gains for the arm joints
         (19.0, 0.0, 1.0),                   # PID gain for the wrist
