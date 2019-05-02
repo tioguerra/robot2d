@@ -73,6 +73,7 @@ class Robot2D:
         self.colors[self.ground_body] = COLORS['GROUND']
         # This list holds references to all simulation bodies
         self.bodies = [self.ground_body]
+        self.balls = []
         # This list will hold all joints
         self.joints = []
         # Create the robot
@@ -442,17 +443,20 @@ class Robot2D:
         grasp, not letting the object go easily'''
         if pos is None:
             pos = self.getFK()
-        self.j7 = self.world.CreateWeldJoint( \
+        #self.j7 = self.world.CreateWeldJoint( \
+        self.j7 = self.world.CreateRevoluteJoint( \
                     bodyA=self.robot_link2_body,\
                     bodyB=body,\
                     anchor=pos,\
                     collideConnected = False)
-        self.j8 = self.world.CreateWeldJoint( \
+        #self.j8 = self.world.CreateWeldJoint( \
+        self.j8 = self.world.CreateRevoluteJoint( \
                     bodyA=self.robot_link4_body,\
                     bodyB=body,\
                     anchor=pos,\
                     collideConnected = False)
-        self.j9 = self.world.CreateWeldJoint( \
+        #self.j9 = self.world.CreateWeldJoint( \
+        self.j9 = self.world.CreateRevoluteJoint( \
                     bodyA=self.robot_link5_body,\
                     bodyB=body,\
                     anchor=pos,\
@@ -488,7 +492,7 @@ class Robot2D:
             self.dmps.append(pydmps.dmp_discrete.DMPs_discrete(n_dmps=3,\
                                                                n_bfs=DMP_KERNELS, \
                                                                ay=np.ones(3)*10.0,\
-                                                               axis_to_not_mirror=1,\
+                                                               axis_to_not_mirror=7,\
                                                                axis_not_to_scale=2))
             if i == 0:
                 start_point = self.dmp_training_paths[i][0]
@@ -741,6 +745,13 @@ class Robot2D:
                 vertices = [b2d_to_pygame(body.transform*v) \
                             for v in shape.vertices]
                 pygame.draw.polygon(self.screen, self.colors[body], vertices)
+        for ball in self.balls:
+            for fixture in ball.fixtures:
+                #print(fixture.shape)
+                #print(dir(fixture.shape))
+                pygame.draw.circle(self.screen, self.colors[ball],
+                                   b2d_to_pygame(ball.transform*fixture.shape.pos),
+                                   int(fixture.shape.radius*PPM), 0)
         # Draw the revolute joints
         if self.isTorqueEnabled:
             joint_color = COLORS['JOINTSON']
@@ -811,6 +822,66 @@ class Robot2D:
             self.colors[box] = COLORS['BOX']
         # And finally we append them to our simulation queue
         self.bodies = self.bodies + self.box_bodies
+    def createSeeSawEnv(self):
+        ''' Creates a see-saw environment, for simulating a dynamic
+        pouring task'''
+        self.table = self.world.CreateStaticBody(position=(40,10))
+        self.table.CreatePolygonFixture(box=(3,5))
+        self.base = self.world.CreateDynamicBody(position=(40,10))
+        self.base.CreatePolygonFixture(box=(5,1), density=0.05, friction=100.0)
+        self.seesaw = self.world.CreateDynamicBody(position=(40,20))
+        self.seesaw.CreatePolygonFixture(box=(10,1), density=0.05,
+                                         friction=100.0)
+        self.handle = self.world.CreateDynamicBody(position=(40+9,21))
+        self.handle.angularDamping = 0.75
+        self.handle.CreatePolygonFixture(box=(0.75,8), density=0.05,
+                                         friction=100.0)
+        self.weight = self.world.CreateDynamicBody(position=(40+9,22-7))
+        self.weight.CreatePolygonFixture(box=(2,2), density=0.05,
+                                         friction=100.0)
+        self.weight.angularDamping = 0.75
+        self.jssb = self.world.CreatePrismaticJoint(bodyA=self.table,
+                                                    bodyB=self.base,
+                                                    anchor=(40,20),
+                                                    axis=(1,0),
+                                                    collideConnected = False)
+        self.jss = self.world.CreateRevoluteJoint(bodyA=self.base,
+                                                  bodyB=self.seesaw,
+                                                  anchor=(40-10,20),
+                                                  collideConnected = True)
+        self.jssh = self.world.CreateRevoluteJoint(bodyA=self.seesaw,
+                                                  bodyB=self.handle,
+                                                  anchor=(40+9,20),
+                                                  collideConnected = False)
+        self.jssw = self.world.CreateWeldJoint(bodyA=self.handle,
+                                               bodyB=self.weight,
+                                               anchor=(40+9,22-7))
+        radius = 1.5
+        for i in range(4):
+            ball = \
+                self.world.CreateDynamicBody(position=(40-5+2*radius*i,22))
+            ball.CreateCircleFixture(radius=radius, density=0.01, friction=0.3,
+                                      restitution=0.0)
+            self.balls.append(ball)
+        self.colors[self.balls[0]] = COLORS['REDBALL']
+        self.colors[self.balls[1]] = COLORS['GREENBALL']
+        self.colors[self.balls[2]] = COLORS['BLUEBALL']
+        self.colors[self.balls[3]] = COLORS['YELLOWBALL']
+        self.colors[self.base] = COLORS['TABLE']
+        self.colors[self.table] = COLORS['TABLE']
+        self.colors[self.seesaw] = COLORS['TABLE']
+        self.colors[self.handle] = COLORS['TABLE']
+        self.colors[self.weight] = COLORS['TABLE']
+        self.bodies = self.bodies + [self.base, self.table, self.seesaw, self.handle,
+                                     self.weight]
+    def fallenBalls(self):
+        count = 0
+        for ball in self.balls:
+            for fixture in ball.fixtures:
+                pos = ball.transform*fixture.shape.pos
+                if pos[1] < 10:
+                    count = count+1
+        return count
     def createTablesEnv(self):
         ''' Creates an environment with two tables and some boxes
         for manipulation tasks
